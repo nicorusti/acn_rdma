@@ -1,0 +1,5 @@
+gcc -O2 -Wall -c rdma_server.c
+gcc -O2 -Wall -c rdma_common.c
+gcc -O2 -Wall rdma_server.o rdma_common.o -o rdma_server -libverbs -lrdmacm
+gcc -O2 -Wall -c rdma_client.c 
+gcc -O2 -Wall rdma_client.o rdma_common.o -o rdma_client -libverbs -lrdmacm
