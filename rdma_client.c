@@ -244,7 +244,7 @@ static int client_send_metadata_to_server()
 	struct ibv_wc wc[2];
 	int ret = -1;
 	client_src_mr = rdma_buffer_register(pd,
-			src,
+			src,/*src is location in memory of the string to be sent to server*/
 			strlen(src),
 			(IBV_ACCESS_LOCAL_WRITE|
 			 IBV_ACCESS_REMOTE_READ|

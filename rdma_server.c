@@ -21,9 +21,10 @@ static struct ibv_qp_init_attr qp_init_attr;
 static struct ibv_qp *client_qp = NULL;
 /* RDMA memory resources */
 static struct ibv_mr *client_metadata_mr = NULL, *server_buffer_mr = NULL, *server_metadata_mr = NULL;
-static struct rdma_buffer_attr client_metadata_attr;
+static struct rdma_buffer_attr client_metadata_attr, server_metadata_attr;
+static struct ibv_send_wr server_send_wr, *bad_server_send_wr = NULL;
 static struct ibv_recv_wr client_recv_wr, *bad_client_recv_wr = NULL;
-static struct ibv_sge client_recv_sge;
+static struct ibv_sge client_recv_sge, server_send_sge;
 
 /* When we call this function cm_client_id must be set to a valid identifier.
  * This is where, we prepare client connection before we accept it. This 
@@ -276,7 +277,7 @@ static int accept_client_connection()
 /* This function sends server side buffer metadata to the connected client */
 static int send_server_metadata_to_client() 
 {
-	struct ibv_wc wc;
+	struct ibv_wc wc[1];
 	int ret = -1;
 	/* Now, we first wait for the client to start the communication by 
 	 * sending the server its metadata info. The server does not use it 
@@ -294,9 +295,71 @@ static int send_server_metadata_to_client()
 	printf("The client has requested buffer length of : %u bytes \n", 
 			client_metadata_attr.length);
 
-	rdma_error("This function is not yet implemented \n");
-	/* IMPLEMENT THIS FUNCTION */
-       return -ENOSYS;
+	/*rdma_error("This function is not yet implemented \n");*/
+	/* START PASTED PART  */
+                /*Allocate memory region for the buffer
+                 of size that client told you*/
+        	server_buffer_mr = rdma_buffer_alloc(pd,/*pd = protection domain */			
+			client_metadata_attr.length,
+			(IBV_ACCESS_LOCAL_WRITE|
+			 IBV_ACCESS_REMOTE_READ|
+			 IBV_ACCESS_REMOTE_WRITE));/*permissions*/
+	if(!server_buffer_mr){
+		rdma_error("Failed to register server buffer, ret = %d \n", ret);
+		return ret;
+	}
+                
+	/* we prepare metadata for the first buffer */
+	server_metadata_attr.address = (uint64_t) server_buffer_mr->addr; 
+	server_metadata_attr.length = server_buffer_mr->length; 
+	server_metadata_attr.stag.local_stag = server_buffer_mr->lkey; 
+        /*lkey= The value that will be used to refer to this MR using a local access*/
+	/* now we register the metadata memory */
+	server_metadata_mr = rdma_buffer_register(pd,
+			&server_metadata_attr,
+			sizeof(server_metadata_attr),
+			IBV_ACCESS_LOCAL_WRITE);
+	if(!server_metadata_mr) {
+		rdma_error("Failed to register the server metadata buffer, ret = %d \n", ret);
+		return ret;
+	}
+	/* now we fill up SGE */
+        /*SGE=Scatter gather element, An SGE is a pointer 
+         * to a Memory Region (MR) which the HCA can read from or write to*/
+	server_send_sge.addr = (uint64_t) server_metadata_mr->addr;
+	server_send_sge.length = (uint32_t) server_metadata_mr->length;
+	server_send_sge.lkey = server_metadata_mr->lkey;
+	/* now we link to the send work request */
+	bzero(&server_send_wr, sizeof(server_send_wr));
+	server_send_wr.sg_list = &server_send_sge;
+	server_send_wr.num_sge = 1;
+	server_send_wr.opcode = IBV_WR_SEND;
+	server_send_wr.send_flags = IBV_SEND_SIGNALED;
+        
+        
+	/* Now we post it */
+	ret = ibv_post_send(client_qp, /*qp=queue pair */
+		       &server_send_wr,
+	       &bad_server_send_wr);
+	if (ret) {
+		rdma_error("Failed to send client metadata, errno: %d \n", 
+				-errno);
+		return -errno;
+	} 
+        /* at this point we are expecting 1 work completion. One for our 
+	 * send */
+	ret = process_work_completion_events(io_completion_channel, 
+			wc, 1);
+	if(ret != 1) {
+		rdma_error("We failed to get 1 work completions , ret = %d \n",
+				ret);
+		return ret;
+	}
+	debug("Server sent to client its buffer location and credentials, showing \n");
+	show_rdma_buffer_attr(&server_metadata_attr);
+        /*END PASTED PART */
+       /*return -ENOSYS;*/
+        return 0; 
 }
 
 /* This is server side logic. Server passively waits for the client to call 
