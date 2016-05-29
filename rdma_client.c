@@ -25,7 +25,7 @@ static struct ibv_mr *client_metadata_mr = NULL,
 static struct rdma_buffer_attr client_metadata_attr, server_metadata_attr;
 static struct ibv_send_wr client_send_wr, *bad_client_send_wr = NULL;
 static struct ibv_recv_wr server_recv_wr, *bad_server_recv_wr = NULL;
-static struct ibv_sge client_send_sge, server_recv_sge, client_src_send_sge;
+static struct ibv_sge client_send_sge, server_recv_sge, client_src_send_sge, client_dst_sge;
 /* Source and Destination buffers, where RDMA operations source and sink */
 static char *src = NULL, *dst = NULL;
 
@@ -307,16 +307,20 @@ static int client_send_metadata_to_server()
  */
 static int client_remote_memory_ops()
 {
+	// The RDMA operations are most likely matched (to the correct memory location of the remote peer)
+	// by means of the size of the registered buffers.
+
 	struct ibv_wc wc1, wc2;
 	int ret = -1;
 
-	// RDMA write:
 
+	// RDMA write:
 	client_src_send_sge.addr = (uint64_t) client_src_mr->addr;
 	client_src_send_sge.length = (uint32_t) client_src_mr->length;
 	client_src_send_sge.lkey = client_src_mr->lkey;
 	/* now we link to the send work request */
 	bzero(&client_send_wr, sizeof(client_send_wr));
+	bzero(&bad_client_send_wr, sizeof(bad_client_send_wr));
 	client_send_wr.sg_list = &client_src_send_sge;
 	client_send_wr.num_sge = 1;
 	client_send_wr.opcode = IBV_WR_RDMA_WRITE;
@@ -326,58 +330,66 @@ static int client_remote_memory_ops()
 		       &client_send_wr,
 	       &bad_client_send_wr);
 	if (ret) {
-		rdma_error("Failed to send client metadata, errno: %d \n",
+		rdma_error("Failed to write src on server, errno: %d \n",
 				-errno);
 		return -errno;
 	}
 
-	// Register buffer for read.
-	//TODO: fix it.
 
+	// Register buffer for read.
 	client_dst_mr = rdma_buffer_register(pd,
-			dst,/*src is location in memory of the string to be sent to server*/
+			dst, // dst is a pointer to where we're storing the read from the server.
 			strlen(dst),
-			(IBV_ACCESS_LOCAL_WRITE|
+			(IBV_ACCESS_LOCAL_WRITE |
+			 IBV_ACCESS_REMOTE_READ |
 			 IBV_ACCESS_REMOTE_WRITE));
 	if(!client_dst_mr){
 		rdma_error("Failed to register the dst buffer, ret = %d \n", ret);
 		return ret;
 	}
 
-	// Wait for write completion.
+
+	// Wait for RDMA write completion.
 	ret = process_work_completion_events(io_completion_channel,
 			wc1, 1);
 	if(ret != 1) {
-		rdma_error("We failed to get write completion, ret = %d \n",
+		rdma_error("We failed to get RDMA write completion, ret = %d \n",
 				ret);
 		return ret;
 	}
-	debug("Server sent us its buffer location and credentials, showing \n");
-	show_rdma_buffer_attr(&server_metadata_attr);
+	debug("RDMA write of src completed. \n");
+
 
 	// Do the RDMA read:
-	//TODO: fix it.
-
-	client_src_send_sge.addr = (uint64_t) client_dst_mr->addr;
-	client_src_send_sge.length = (uint32_t) client_dst_mr->length;
-	client_src_send_sge.lkey = client_dst_mr->lkey;
+	client_dst_sge.addr = (uint64_t) client_dst_mr->addr;
+	client_dst_sge.length = (uint32_t) client_dst_mr->length;
+	client_dst_sge.lkey = client_dst_mr->lkey;
 	/* now we link to the send work request */
 	bzero(&client_send_wr, sizeof(client_send_wr));
-	client_send_wr.sg_list = &client_src_send_sge;
+	bzero(&bad_client_send_wr, sizeof(bad_client_send_wr));
+	client_send_wr.sg_list = &client_dst_sge;
 	client_send_wr.num_sge = 1;
-	client_send_wr.opcode = IBV_WR_RDMA_WRITE;
+	client_send_wr.opcode = IBV_WR_RDMA_READ;
 	client_send_wr.send_flags = IBV_SEND_SIGNALED;
-	// Post the RDMA WRITE.
+	// Post the RDMA READ.
 	ret = ibv_post_send(client_qp,
 		       &client_send_wr,
 	       &bad_client_send_wr);
 	if (ret) {
-		rdma_error("Failed to send client metadata, errno: %d \n",
+		rdma_error("Failed to read into dst from server, errno: %d \n",
 				-errno);
 		return -errno;
 	}
 
-	//TODO: check read completion.
+	// Wait for read completion.
+	ret = process_work_completion_events(io_completion_channel,
+			wc2, 1);
+	if(ret != 1) {
+		rdma_error("We failed to get RDMA read completion, ret = %d \n",
+				ret);
+		return ret;
+	}
+	debug("RDMA read into dst completed. \n");
 
 	return 0;
 }
