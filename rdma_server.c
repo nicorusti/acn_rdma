@@ -284,7 +284,7 @@ static int send_server_metadata_to_client()
 	 * We will receive a work completion notification for
 	 * our pre-posted receive request.
 	 */
-	ret = process_work_completion_events(io_completion_channel, &wc, 1);
+	ret = process_work_completion_events(io_completion_channel, wc, 1);
 	if (ret != 1) {
 		rdma_error("Failed to receive , ret = %d \n", ret);
 		return ret;
@@ -314,7 +314,7 @@ static int send_server_metadata_to_client()
 	server_metadata_attr.address = (uint64_t) server_buffer_mr->addr;
 	server_metadata_attr.length = server_buffer_mr->length;
 	/*lkey= The value that will be used to refer to this MR using a local access*/
-	server_metadata_attr.stag.local_stag = server_buffer_mr->lkey;
+	server_metadata_attr.stag.remote_stag = server_buffer_mr->rkey;
 
 	/* now we register the metadata memory */
 	server_metadata_mr = rdma_buffer_register(

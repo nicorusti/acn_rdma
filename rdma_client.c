@@ -320,7 +320,7 @@ static int client_remote_memory_ops()
 	bzero(&bad_client_send_wr, sizeof(bad_client_send_wr));
 	client_send_wr.sg_list = &client_src_send_sge;
 	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address; // Address where to write to...
-	client_send_wr.wr.rdma.rkey = server_metadata_attr.rkey; // ...and its rkey.
+	client_send_wr.wr.rdma.rkey = (uint32_t) server_metadata_attr.stag.remote_stag; // ...and its rkey.
 	client_send_wr.num_sge = 1;
 	client_send_wr.opcode = IBV_WR_RDMA_WRITE;
 	client_send_wr.send_flags = IBV_SEND_SIGNALED;
@@ -338,10 +338,11 @@ static int client_remote_memory_ops()
 	// Register buffer for read.
 	client_dst_mr = rdma_buffer_register(pd,
 			dst, // dst is a pointer to where we're storing the read from the server.
-			strlen(dst),
-			(IBV_ACCESS_LOCAL_WRITE |
-			 IBV_ACCESS_REMOTE_READ |
-			 IBV_ACCESS_REMOTE_WRITE));
+			server_metadata_attr.length,
+			(IBV_ACCESS_LOCAL_WRITE|
+			 IBV_ACCESS_REMOTE_READ|
+			 IBV_ACCESS_REMOTE_WRITE)); 
+
 	if(!client_dst_mr){
 		rdma_error("Failed to register the dst buffer, ret = %d \n", ret);
 		return ret;
@@ -350,7 +351,7 @@ static int client_remote_memory_ops()
 
 	// Wait for RDMA write completion.
 	ret = process_work_completion_events(io_completion_channel,
-			wc1, 1);
+			&wc1, 1);
 	if(ret != 1) {
 		rdma_error("We failed to get RDMA write completion, ret = %d \n",
 				ret);
@@ -368,13 +369,13 @@ static int client_remote_memory_ops()
 	bzero(&bad_client_send_wr, sizeof(bad_client_send_wr));
 	client_send_wr.sg_list = &client_dst_sge;
 	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address; // Address where to read from...
-	client_send_wr.wr.rdma.rkey = server_metadata_attr.rkey; // ...and its rkey.
+	client_send_wr.wr.rdma.rkey = (uint32_t) server_metadata_attr.stag.remote_stag; // ...and its rkey.
 	client_send_wr.num_sge = 1;
 	client_send_wr.opcode = IBV_WR_RDMA_READ;
 	client_send_wr.send_flags = IBV_SEND_SIGNALED;
 	// Post the RDMA READ.
 	ret = ibv_post_send(client_qp,
-		       &client_send_wr,
+		       &client_send_wr, 
 	       &bad_client_send_wr);
 	if (ret) {
 		rdma_error("Failed to read into dst from server, errno: %d \n",
@@ -384,7 +385,7 @@ static int client_remote_memory_ops()
 
 	// Wait for read completion.
 	ret = process_work_completion_events(io_completion_channel,
-			wc2, 1);
+			&wc2, 1);
 	if(ret != 1) {
 		rdma_error("We failed to get RDMA read completion, ret = %d \n",
 				ret);
