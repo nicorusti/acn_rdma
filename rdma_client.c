@@ -307,21 +307,20 @@ static int client_send_metadata_to_server()
  */
 static int client_remote_memory_ops()
 {
-	// The RDMA operations are most likely matched (to the correct memory location of the remote peer)
-	// by means of the size of the registered buffers.
-
 	struct ibv_wc wc1, wc2;
 	int ret = -1;
 
 
 	// RDMA write:
-	client_src_send_sge.addr = (uint64_t) client_src_mr->addr;
+	client_src_send_sge.addr = (uint64_t) client_src_mr->addr; // The SGE contains what to write.
 	client_src_send_sge.length = (uint32_t) client_src_mr->length;
 	client_src_send_sge.lkey = client_src_mr->lkey;
 	/* now we link to the send work request */
 	bzero(&client_send_wr, sizeof(client_send_wr));
 	bzero(&bad_client_send_wr, sizeof(bad_client_send_wr));
 	client_send_wr.sg_list = &client_src_send_sge;
+	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address; // Address where to write to...
+	client_send_wr.wr.rdma.rkey = server_metadata_attr.rkey; // ...and its rkey.
 	client_send_wr.num_sge = 1;
 	client_send_wr.opcode = IBV_WR_RDMA_WRITE;
 	client_send_wr.send_flags = IBV_SEND_SIGNALED;
@@ -361,13 +360,15 @@ static int client_remote_memory_ops()
 
 
 	// Do the RDMA read:
-	client_dst_sge.addr = (uint64_t) client_dst_mr->addr;
+	client_dst_sge.addr = (uint64_t) client_dst_mr->addr; // The SGE contains where to store the read.
 	client_dst_sge.length = (uint32_t) client_dst_mr->length;
 	client_dst_sge.lkey = client_dst_mr->lkey;
 	/* now we link to the send work request */
 	bzero(&client_send_wr, sizeof(client_send_wr));
 	bzero(&bad_client_send_wr, sizeof(bad_client_send_wr));
 	client_send_wr.sg_list = &client_dst_sge;
+	client_send_wr.wr.rdma.remote_addr = server_metadata_attr.address; // Address where to read from...
+	client_send_wr.wr.rdma.rkey = server_metadata_attr.rkey; // ...and its rkey.
 	client_send_wr.num_sge = 1;
 	client_send_wr.opcode = IBV_WR_RDMA_READ;
 	client_send_wr.send_flags = IBV_SEND_SIGNALED;
